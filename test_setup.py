@@ -12,12 +12,9 @@ def test_imports():
     
     required_modules = [
         'streamlit',
-        'sentence_transformers',
-        'faiss',
         'PyPDF2',
         'docx',
-        'pdfplumber',
-        'langchain',
+        'sklearn',
         'openai',
         'pandas',
         'plotly',

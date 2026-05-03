@@ -13,10 +13,9 @@ Transform your study experience with AI! Upload your notes and get personalized 
 
 ## 🛠️ Tech Stack
 
-- **Backend**: Python, LangChain
+- **Backend**: Python
 - **LLM**: OpenAI GPT-3.5-turbo
-- **Embeddings**: SentenceTransformers (all-MiniLM-L6-v2)
-- **Vector DB**: FAISS
+- **Retrieval**: TF-IDF + cosine similarity
 - **Frontend**: Streamlit
 - **Visualization**: Plotly
 
@@ -153,8 +152,8 @@ python evaluate.py
 
 ### RAG (Retrieval-Augmented Generation)
 - Splits documents into chunks
-- Creates embeddings using SentenceTransformers
-- Stores in FAISS for fast similarity search
+- Builds a TF-IDF index from notes
+- Uses cosine similarity for relevant chunk retrieval
 - Retrieves top-k relevant chunks for user queries
 
 ### Quiz Generation

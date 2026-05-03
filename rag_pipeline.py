@@ -5,15 +5,19 @@ Handles document processing, embedding creation, and retrieval
 
 import os
 import pickle
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import List, Dict, Any
 import PyPDF2
 import docx
-import pdfplumber
-from sentence_transformers import SentenceTransformer
-import faiss
-import numpy as np
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+@dataclass
+class Document:
+    """Minimal document structure used by the app."""
+    page_content: str
+    metadata: Dict[str, Any]
 
 
 class RAGPipeline:
@@ -22,43 +26,27 @@ class RAGPipeline:
     Processes documents, creates embeddings, and retrieves relevant content
     """
     
-    def __init__(self, embedding_model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self):
         """
-        Initialize RAG pipeline with embedding model
-        
-        Args:
-            embedding_model_name: Name of the sentence transformer model
+        Initialize RAG pipeline with TF-IDF vectorization.
         """
-        self.embedding_model = SentenceTransformer(embedding_model_name)
-        self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
-        self.index = None
+        self.vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
+        self.doc_matrix = None
         self.documents = []
-        self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=500,
-            chunk_overlap=50,
-            length_function=len,
-        )
+        self.embedding_dim = 0
         
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Extract text from PDF file"""
         text = ""
         try:
-            # Try with pdfplumber first (better for complex PDFs)
-            with pdfplumber.open(pdf_path) as pdf:
-                for page in pdf.pages:
-                    page_text = page.extract_text()
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                for page in pdf_reader.pages:
+                    page_text = page.extract_text() or ""
                     if page_text:
                         text += page_text + "\n"
         except Exception as e:
-            print(f"pdfplumber failed, trying PyPDF2: {e}")
-            # Fallback to PyPDF2
-            try:
-                with open(pdf_path, 'rb') as file:
-                    pdf_reader = PyPDF2.PdfReader(file)
-                    for page in pdf_reader.pages:
-                        text += page.extract_text() + "\n"
-            except Exception as e:
-                print(f"Error extracting PDF with PyPDF2: {e}")
+            print(f"Error extracting PDF with PyPDF2: {e}")
         
         return text.strip()
     
@@ -80,6 +68,24 @@ class RAGPipeline:
         except Exception as e:
             print(f"Error reading TXT file: {e}")
             return ""
+
+    @staticmethod
+    def split_text(text: str, chunk_size: int = 500, chunk_overlap: int = 50) -> List[str]:
+        """Split text into overlapping chunks."""
+        if not text:
+            return []
+        if chunk_overlap >= chunk_size:
+            chunk_overlap = 0
+        chunks = []
+        start = 0
+        step = chunk_size - chunk_overlap
+        while start < len(text):
+            end = min(start + chunk_size, len(text))
+            chunk = text[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+            start += step
+        return chunks
     
     def process_document(self, file_path: str) -> List[Document]:
         """
@@ -107,7 +113,7 @@ class RAGPipeline:
             raise ValueError("No text could be extracted from the document")
         
         # Split text into chunks
-        chunks = self.text_splitter.split_text(text)
+        chunks = self.split_text(text)
         
         # Create Document objects
         documents = [
@@ -117,36 +123,20 @@ class RAGPipeline:
         
         return documents
     
-    def create_embeddings(self, documents: List[Document]) -> np.ndarray:
-        """
-        Create embeddings for document chunks
-        
-        Args:
-            documents: List of Document objects
-            
-        Returns:
-            Numpy array of embeddings
-        """
-        texts = [doc.page_content for doc in documents]
-        embeddings = self.embedding_model.encode(texts, show_progress_bar=True)
-        return embeddings
-    
     def build_index(self, documents: List[Document]):
         """
-        Build FAISS index from documents
+        Build TF-IDF index from documents.
         
         Args:
             documents: List of Document objects
         """
+        if not documents:
+            return
+
         self.documents.extend(documents)
-        embeddings = self.create_embeddings(documents)
-        
-        if self.index is None:
-            # Create new index
-            self.index = faiss.IndexFlatL2(self.embedding_dim)
-        
-        # Add embeddings to index
-        self.index.add(embeddings.astype('float32'))
+        texts = [doc.page_content for doc in self.documents]
+        self.doc_matrix = self.vectorizer.fit_transform(texts)
+        self.embedding_dim = self.doc_matrix.shape[1]
         
     def retrieve(self, query: str, top_k: int = 3) -> List[Document]:
         """
@@ -159,17 +149,20 @@ class RAGPipeline:
         Returns:
             List of most relevant Document objects
         """
-        if self.index is None or len(self.documents) == 0:
+        if self.doc_matrix is None or len(self.documents) == 0:
             return []
-        
-        # Encode query
-        query_embedding = self.embedding_model.encode([query])
-        
-        # Search in FAISS index
-        distances, indices = self.index.search(query_embedding.astype('float32'), top_k)
-        
-        # Get relevant documents
-        relevant_docs = [self.documents[idx] for idx in indices[0] if idx < len(self.documents)]
+
+        query_vector = self.vectorizer.transform([query])
+        scores = cosine_similarity(query_vector, self.doc_matrix).flatten()
+        ranked_indices = scores.argsort()[::-1]
+
+        relevant_docs = []
+        for idx in ranked_indices:
+            if scores[idx] <= 0:
+                continue
+            relevant_docs.append(self.documents[idx])
+            if len(relevant_docs) >= top_k:
+                break
         
         return relevant_docs
     
@@ -178,7 +171,8 @@ class RAGPipeline:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         
         data = {
-            'index': faiss.serialize_index(self.index) if self.index else None,
+            'vectorizer': self.vectorizer,
+            'doc_matrix': self.doc_matrix,
             'documents': self.documents
         }
         
@@ -196,9 +190,11 @@ class RAGPipeline:
         with open(load_path, 'rb') as f:
             data = pickle.load(f)
         
-        if data['index']:
-            self.index = faiss.deserialize_index(data['index'])
-        self.documents = data['documents']
+        self.vectorizer = data.get('vectorizer', TfidfVectorizer(stop_words="english", ngram_range=(1, 2)))
+        self.doc_matrix = data.get('doc_matrix')
+        self.documents = data.get('documents', [])
+        if self.doc_matrix is not None:
+            self.embedding_dim = self.doc_matrix.shape[1]
         
         print(f"Vector store loaded from {load_path}")
         return True
