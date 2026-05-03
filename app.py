@@ -70,6 +70,13 @@ if 'documents_loaded' not in st.session_state:
     st.session_state.documents_loaded = False
 
 
+def get_openai_api_key():
+    """Read OpenAI key from Streamlit secrets first, then environment."""
+    if "OPENAI_API_KEY" in st.secrets:
+        return st.secrets["OPENAI_API_KEY"]
+    return os.getenv("OPENAI_API_KEY")
+
+
 def initialize_components():
     """Initialize RAG pipeline and Quiz Generator"""
     try:
@@ -80,12 +87,12 @@ def initialize_components():
                 st.session_state.rag_pipeline.load_vectorstore()
         
         if st.session_state.quiz_generator is None:
-            api_key = os.getenv("OPENAI_API_KEY")
+            api_key = get_openai_api_key()
             if api_key:
                 with st.spinner("Initializing Quiz Generator..."):
                     st.session_state.quiz_generator = QuizGenerator(api_key)
             else:
-                st.warning("⚠️ OpenAI API key not found. Please set it in the .env file for quiz generation.")
+                st.warning("⚠️ OpenAI API key not found. Set OPENAI_API_KEY in .env (local) or Streamlit Secrets (deployment).")
         
         return True
     except Exception as e:
@@ -194,7 +201,7 @@ def quiz_generation_page():
         return
     
     if not st.session_state.quiz_generator:
-        st.error("⚠️ Quiz generator not initialized. Please check your OpenAI API key in .env file.")
+        st.error("⚠️ Quiz generator not initialized. Configure OPENAI_API_KEY in .env (local) or Streamlit Secrets (deployment).")
         return
     
     # Quiz configuration

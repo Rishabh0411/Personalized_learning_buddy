@@ -84,6 +84,22 @@ streamlit run app.py
 
 The app will open in your browser at `http://localhost:8501`
 
+## ☁️ Deploy on Streamlit Community Cloud
+
+1. Push this project to a GitHub repository.
+2. Go to https://share.streamlit.io/ and click **New app**.
+3. Select your repo, set **Main file path** to `app.py`, and deploy.
+4. In app settings, add this secret:
+
+```toml
+OPENAI_API_KEY="your_openai_api_key_here"
+```
+
+Notes:
+- `runtime.txt` pins Python version for cloud runtime.
+- `.streamlit/config.toml` is included for stable server/theme config.
+- Dependencies install from `requirements.txt` with CPU-only PyTorch wheels.
+
 ### Workflow
 
 1. **Upload Notes**: Go to "📄 Upload Notes" and upload your study materials (PDF/DOCX/TXT)
